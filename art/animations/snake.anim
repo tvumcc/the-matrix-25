@@ -1,0 +1,58 @@
+# snake slides around the border, 2 cells per frame
+delay: 100
+
+# top edge, heading right
+11110
+00000
+00000
+00000
+00000
+
+# top-right corner turn
+00111
+00001
+00000
+00000
+00000
+
+# right edge, heading down
+00001
+00001
+00001
+00001
+00000
+
+# bottom-right corner turn
+00000
+00000
+00001
+00001
+00011
+
+# bottom edge, heading left
+00000
+00000
+00000
+00000
+01111
+
+# bottom-left corner turn
+00000
+00000
+00000
+10000
+11100
+
+# left edge, heading up
+00000
+10000
+10000
+10000
+10000
+
+# top-left corner turn
+11000
+10000
+10000
+00000
+00000

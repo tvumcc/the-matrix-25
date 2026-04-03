@@ -1,0 +1,59 @@
+# pong rally with diagonal ball physics
+# ball bounces off walls and 3-pixel paddles
+delay: 150
+
+# ball at (1,1) heading right-down, left paddle just hit
+10000
+11001
+10001
+00001
+00000
+
+# ball at (2,2) crossing center
+10000
+10000
+10101
+00001
+00001
+
+# ball at (3,3) right paddle hit
+00000
+10000
+10001
+10011
+00001
+
+# ball at (4,2) bounces off bottom wall
+00000
+00001
+10001
+10001
+10100
+
+# ball at (3,1) left paddle hit
+00001
+00001
+10001
+11000
+10000
+
+# ball at (2,2) crossing center
+00001
+00001
+10101
+10000
+10000
+
+# ball at (1,3) right paddle hit
+00001
+10011
+10001
+10000
+00000
+
+# ball at (0,2) bounces off top wall
+10100
+10001
+10001
+00001
+00000

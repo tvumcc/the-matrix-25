@@ -1,2 +1,4 @@
 /eco-fair-led-matrix-backups
 *.lck
+*/__pycache__/*
+*/.venv/*
