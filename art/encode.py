@@ -17,21 +17,32 @@ import cleaner
 from interpret import parse_text as parse_animation
 
 NUM_ROWS = 5
-MAX_BASIS_SIZE = 8  # 3 bits -> basis indices 0-7
+MAX_BASIS_SIZE = 7  # 7 bits -> basis flags
 ANIM_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "animations")
 
 # TODO: animations need to be excluded to fit in memory
 EXCLUDED_ANIMATIONS = []
 
 # exclusion round 1
-EXCLUDED_ANIMATIONS += ["arrows", "cascade", "cross", "checkerboard", "loading", "spotlight", "starburst", "strobe", "glitch"]
+EXCLUDED_ANIMATIONS += [
+    "arrows",
+    "cascade",
+    "cross",
+    "checkerboard",
+    "loading",
+    "spotlight",
+    "starburst",
+    "strobe",
+    "glitch",
+]
 
 # exclusion round 2
 EXCLUDED_ANIMATIONS += ["bounce", "orbit", "scan", "wipe", "snake"]
 
 # exclusion round 3
 EXCLUDED_ANIMATIONS += []
-#need to cut matrix or rain
+# need to cut matrix or rain
+
 
 def collect_animations(
     excluded_names: list[str] | None = None,
@@ -51,7 +62,9 @@ def collect_animations(
     return animations, sorted(excluded_found), excluded_missing
 
 
-def unique_timings(animations: dict[str, list[tuple[int, list[list[int]]]]]) -> set[int]:
+def unique_timings(
+    animations: dict[str, list[tuple[int, list[list[int]]]]],
+) -> set[int]:
     return {timing for anim in animations.values() for timing, _ in anim}
 
 
@@ -71,7 +84,9 @@ def reachable_sums(basis: list[int], picks: int, max_val: int) -> set[int]:
     return current
 
 
-def find_basis(targets: set[int], max_size: int = MAX_BASIS_SIZE, picks: int = NUM_ROWS) -> list[int]:
+def find_basis(
+    targets: set[int], max_size: int = MAX_BASIS_SIZE, picks: int = NUM_ROWS
+) -> list[int]:
     """find a basis of at most `max_size` values (including 0) such that
     every target is a sum of exactly `picks` basis values.
 
@@ -113,6 +128,7 @@ def decompose(target: int, basis: list[int], picks: int = NUM_ROWS) -> list[int]
     """find indices into basis that sum to target using exactly `picks` values.
     returns list of `picks` indices, or None if impossible.
     """
+
     def backtrack(remaining: int, depth: int, path: list[int]) -> list[int] | None:
         if depth == picks:
             return path[:] if remaining == 0 else None
@@ -125,17 +141,12 @@ def decompose(target: int, basis: list[int], picks: int = NUM_ROWS) -> list[int]
                 return result
             path.pop()
         return None
+
     return backtrack(target, 0, [])
 
 
-def calculate_animation_byte_summary(total_rows: int) -> dict[str, int]:
-    if total_rows % NUM_ROWS != 0:
-        raise ValueError(f"row stream must be divisible by {NUM_ROWS}, got {total_rows}")
-    return {"row_bytes": total_rows, "frame_count": total_rows // NUM_ROWS}
-
-
 def main() -> None:
-    excluded_names = set(EXCLUDED_ANIMATIONS)
+    excluded_names: list[str] = list(set(EXCLUDED_ANIMATIONS))
     animations, excluded_found, excluded_missing = collect_animations(excluded_names)
     animations, clean_stats = cleaner.clean_all(animations)
     timings = unique_timings(animations)
@@ -160,7 +171,7 @@ def main() -> None:
         print(f"{heading('cleaned before encoding')}: {len(clean_stats)}")
         for item in clean_stats:
             print(
-                f"  {success(item['name'])}: {item['before']} -> {item['after']} "
+                f"  {success(str(item['name']))}: {item['before']} -> {item['after']} "
                 f"(trimmed {item['trimmed']}, bytes saved {item['bytes_saved']})"
             )
         print()
@@ -175,7 +186,9 @@ def main() -> None:
     reach = reachable_sums(basis, NUM_ROWS, max(timings))
     missing = timings - reach
     if missing:
-        print(f"\n{error('FAILED')} {warning('unreachable timings')}: {sorted(missing)}")
+        print(
+            f"\n{error('FAILED')} {warning('unreachable timings')}: {sorted(missing)}"
+        )
         return
 
     print(f"\n{success(f'all {len(timings)} timings are reachable')}\n")
@@ -190,29 +203,40 @@ def main() -> None:
         animation = animations[name]
         starting_index = len(everything)
         for frame_idx, frame in enumerate(animation):
-            # encode delay by packing the timing basis index into top 3 bits.
+            # encode delay by packing the timing basis index into top 7 bits.
             indices = decompose(frame[0], basis)
             if indices is None:
-                raise ValueError(f"failed to decompose timing of {name} frame {frame_idx}: {frame[0]}")
-            indices = sorted(indices, reverse=True)
-            for time_idx, row_val in zip(indices, frame[1]):
-                row = bin(time_idx)[2:].zfill(3) + "".join(str(i) for i in row_val)
-                everything.append(row)
+                raise ValueError(
+                    f"failed to decompose timing of {name} frame {frame_idx}: {frame[0]}"
+                )
+
+            basis_flags = [False] * 7
+            for idx in indices:
+                basis_flags[idx] = True
+            flags_str = "".join("1" if b else "0" for b in basis_flags)
+
+            grid_str = ""
+            for row_val in frame[1]:
+                grid_str += "".join(str(i) for i in row_val)
+
+            combined = flags_str + grid_str
+            everything.append(combined)
         ending_index = len(everything)
         anim_ranges[name] = (starting_index, ending_index)
 
     start_indices = [anim_ranges[name][0] for name in keys]
-    byte_summary = calculate_animation_byte_summary(len(everything))
 
-    # print a per-animation footprint summary.
-    total_row_bytes = byte_summary["row_bytes"]
-    total_frames = byte_summary["frame_count"]
-    index_w = len(str(total_row_bytes))
+    total_frames = len(everything)
+    animation_bytes = total_frames * 4
+    index_w = len(str(total_frames))
     rows: list[dict[str, str]] = []
+
     for name, (start, end) in anim_ranges.items():
-        byte_count = end - start
-        frame_count = byte_count // NUM_ROWS
-        percent = 0.0 if total_row_bytes == 0 else (byte_count / total_row_bytes) * 100.0
+        frame_count = end - start
+        byte_count = frame_count * 4
+        percent = (
+            0.0 if animation_bytes == 0 else (byte_count / animation_bytes) * 100.0
+        )
         range_text = f"[{start:>{index_w}}, {end:>{index_w}})"
         rows.append(
             {
@@ -228,21 +252,26 @@ def main() -> None:
     range_w = max(len("range"), *(len(r["range"]) for r in rows))
     frames_w = max(len("frames"), *(len(r["frames"]) for r in rows))
     bytes_w = max(len("bytes"), *(len(r["bytes"]) for r in rows))
-    percent_w = max(len("% rows"), *(len(r["percent"]) for r in rows))
+    percent_w = max(len("% bytes"), *(len(r["percent"]) for r in rows))
 
     def _left_cell(value: str, width: int, colorize) -> str:
         pad_len = max(0, width - len(value))
-        return colorize(value) + muted("." * min(pad_len, 6)) + (" " * max(0, pad_len - 6))
+        return (
+            colorize(value) + muted("." * min(pad_len, 6)) + (" " * max(0, pad_len - 6))
+        )
 
     def _right_cell(value: str, width: int, colorize) -> str:
         pad_len = max(0, width - len(value))
-        return (" " * max(0, pad_len - 6)) + muted("." * min(pad_len, 6)) + colorize(value)
+        return (
+            (" " * max(0, pad_len - 6)) + muted("." * min(pad_len, 6)) + colorize(value)
+        )
+
     header_cells = [
         info(f"{'name':<{name_w}}"),
         accent(f"{'range':<{range_w}}"),
         key(f"{'frames':>{frames_w}}"),
         warning(f"{'bytes':>{bytes_w}}"),
-        alert(f"{'% rows':>{percent_w}}"),
+        alert(f"{'% bytes':>{percent_w}}"),
     ]
     header = "  " + "  ".join(header_cells)
     print(header)
@@ -254,7 +283,9 @@ def main() -> None:
         frames_cell = _right_cell(row["frames"], frames_w, key)
         bytes_cell = _right_cell(row["bytes"], bytes_w, warning)
         percent_cell = _right_cell(row["percent"], percent_w, alert)
-        print(f"  {name_cell}  {range_cell}  {frames_cell}  {bytes_cell}  {percent_cell}")
+        print(
+            f"  {name_cell}  {range_cell}  {frames_cell}  {bytes_cell}  {percent_cell}"
+        )
 
     # write packed payload to disk.
     with open("encoded.dat", "w") as f:
@@ -265,25 +296,43 @@ def main() -> None:
         f.write("}\n")
 
         # write start indices.
-        f.write("# start_indices: \n")
+        f.write("\n# start_indices: \n")
         f.write("{")
         f.write(",".join(str(i) for i in start_indices))
         f.write("}\n")
 
         # write all packed rows.
-        f.write("# everything: \n")
+        f.write("\n# everything: \n")
         f.write("{")
         f.write(",".join(["0b" + e for e in everything]))
         f.write("}\n")
-    
-    print()
-    print(f"{key('animation bytes')}: {total_row_bytes}")
-    print(f"{key('animation frames')}: {total_frames}")
-    print(f"{key('total animations')}: {len(animations)}, {key('excluded')}: {len(excluded_found)}, {key('excluded missing')}: {len(excluded_missing)}")
+        f.write("\n# everything_hex: \n")
+        f.write("{")
+        f.write(",".join(["0x" + hex(int(e, 2))[2:] for e in everything]))
+        f.write("}\n")
+        f.write("\n# everything_int: \n")
+        f.write("{")
+        f.write(",".join([str(int(e, 2)) for e in everything]))
+        f.write("}\n")
 
-    print()
+    print(success("\nall data written to encoded.dat\n"))
 
-    print(success("\nall data written to encoded.dat"))
+    anim_bytes = len(everything) * 4
+    start_indices_bytes = len(anim_ranges)
+    basis_bytes = len(basis)
+    total_bytes = anim_bytes + start_indices_bytes + basis_bytes
+
+    print(heading("Memory Footprint:"))
+    print(
+        f"  {key('Animation Data (32-bit frames)')}: {anim_bytes} bytes ({total_frames} frames)"
+    )
+    print(
+        f"  {key('Start Indices (8-bit)')}:          {start_indices_bytes} bytes ({len(anim_ranges)} animations)"
+    )
+    print(f"  {key('Basis Array (8-bit)')}:            {basis_bytes} bytes")
+    print(f"  {muted('-' * 45)}")
+    print(f"  {warning('Total Required Memory')}:          {total_bytes} bytes")
+
 
 if __name__ == "__main__":
     main()

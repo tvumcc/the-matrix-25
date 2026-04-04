@@ -18,10 +18,7 @@ def _parse_int_array(body: str) -> list[int]:
         item = token.strip()
         if not item:
             continue
-        if item.startswith("0b"):
-            values.append(int(item[2:], 2))
-        else:
-            values.append(int(item))
+        values.append(int(item, 0))
     return values
 
 
@@ -49,36 +46,30 @@ def _decode_span(
     basis: list[int], everything: list[int], start: int, end: int
 ) -> list[tuple[int, list[list[int]]]]:
     count = end - start
-    if count < 0 or count % ROWS != 0:
-        raise ValueError("invalid animation row span in encoded.dat")
+    if count < 0:
+        raise ValueError("invalid animation frame span in encoded.dat")
 
     frames: list[tuple[int, list[list[int]]]] = []
     pos = start
     while pos < end:
+        packed = everything[pos]
+
         delay = 0
+        for i in range(7):
+            if (packed >> (31 - i)) & 1:
+                if i < len(basis):
+                    delay += basis[i]
+
         grid: list[list[int]] = []
-
-        row_offset = 0
-        while row_offset < ROWS:
-            packed = everything[pos + row_offset]
-            basis_idx = (packed >> 5) & 0b111
-            led_bits = packed & 0b11111
-
-            if basis_idx >= len(basis):
-                raise ValueError(f"basis index {basis_idx} is out of range")
-
-            delay += basis[basis_idx]
-
+        for r in range(ROWS):
             row: list[int] = []
-            bit = COLS - 1
-            while bit >= 0:
-                row.append((led_bits >> bit) & 1)
-                bit -= 1
+            for c in range(COLS):
+                bit_pos = 24 - (r * COLS + c)
+                row.append((packed >> bit_pos) & 1)
             grid.append(row)
-            row_offset += 1
 
         frames.append((delay, grid))
-        pos += ROWS
+        pos += 1
 
     return frames
 

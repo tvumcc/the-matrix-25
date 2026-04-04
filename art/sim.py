@@ -14,6 +14,7 @@ COLOR_OFF = "#331111"
 COLOR_BG = "#1a1a1a"
 COLOR_TEXT = "#999999"
 
+
 class Simulator:
     def __init__(self, root: tk.Tk, start_name: str | None = None) -> None:
         self.root = root
@@ -34,7 +35,10 @@ class Simulator:
         selector.pack(fill=tk.X, padx=10, pady=(10, 0))
 
         tk.Label(
-            selector, text="animation", fg=COLOR_TEXT, bg=COLOR_BG,
+            selector,
+            text="animation",
+            fg=COLOR_TEXT,
+            bg=COLOR_BG,
             font=("Menlo", 11),
         ).pack(side=tk.LEFT, padx=(0, 8))
 
@@ -43,20 +47,28 @@ class Simulator:
 
         style = ttk.Style()
         style.theme_use("clam")
-        style.configure("Dark.TCombobox",
-            fieldbackground="#333333", background="#333333",
-            foreground=COLOR_TEXT, selectbackground="#444444",
+        style.configure(
+            "Dark.TCombobox",
+            fieldbackground="#333333",
+            background="#333333",
+            foreground=COLOR_TEXT,
+            selectbackground="#444444",
             selectforeground="#ffffff",
         )
-        style.map("Dark.TCombobox",
+        style.map(
+            "Dark.TCombobox",
             fieldbackground=[("readonly", "#333333")],
             foreground=[("readonly", COLOR_TEXT)],
         )
 
         self.dropdown = ttk.Combobox(
-            selector, textvariable=self.anim_var,
-            values=names, state="readonly", width=18,
-            style="Dark.TCombobox", font=("Menlo", 11),
+            selector,
+            textvariable=self.anim_var,
+            values=names,
+            state="readonly",
+            width=18,
+            style="Dark.TCombobox",
+            font=("Menlo", 11),
         )
         self.dropdown.pack(side=tk.LEFT)
         self.dropdown.bind("<<ComboboxSelected>>", self.on_select)
@@ -64,8 +76,11 @@ class Simulator:
         canvas_w = PADDING * 2 + (COLS - 1) * LED_SPACING
         canvas_h = PADDING * 2 + (ROWS - 1) * LED_SPACING
         self.canvas = tk.Canvas(
-            root, width=canvas_w, height=canvas_h,
-            bg=COLOR_BG, highlightthickness=0,
+            root,
+            width=canvas_w,
+            height=canvas_h,
+            bg=COLOR_BG,
+            highlightthickness=0,
         )
         self.canvas.pack(padx=10, pady=(10, 0))
 
@@ -78,14 +93,20 @@ class Simulator:
                 cx = PADDING + c * LED_SPACING
                 cy = PADDING + r * LED_SPACING
                 glow = self.canvas.create_oval(
-                    cx - LED_RADIUS - 4, cy - LED_RADIUS - 4,
-                    cx + LED_RADIUS + 4, cy + LED_RADIUS + 4,
-                    fill=COLOR_BG, outline="",
+                    cx - LED_RADIUS - 4,
+                    cy - LED_RADIUS - 4,
+                    cx + LED_RADIUS + 4,
+                    cy + LED_RADIUS + 4,
+                    fill=COLOR_BG,
+                    outline="",
                 )
                 led = self.canvas.create_oval(
-                    cx - LED_RADIUS, cy - LED_RADIUS,
-                    cx + LED_RADIUS, cy + LED_RADIUS,
-                    fill=COLOR_OFF, outline="#222222",
+                    cx - LED_RADIUS,
+                    cy - LED_RADIUS,
+                    cx + LED_RADIUS,
+                    cy + LED_RADIUS,
+                    fill=COLOR_OFF,
+                    outline="#222222",
                 )
                 row_glows.append(glow)
                 row_leds.append(led)
@@ -96,15 +117,23 @@ class Simulator:
         status.pack(fill=tk.X, padx=10, pady=(6, 10))
 
         self.label = tk.Label(
-            status, text="", fg=COLOR_TEXT, bg=COLOR_BG,
+            status,
+            text="",
+            fg=COLOR_TEXT,
+            bg=COLOR_BG,
             font=("Menlo", 11),
         )
         self.label.pack(side=tk.LEFT)
 
         self.pause_btn = tk.Button(
-            status, text="⏸", command=self.toggle_pause,
-            bg="#333333", fg=COLOR_TEXT, relief=tk.FLAT,
-            font=("Menlo", 12), width=3,
+            status,
+            text="⏸",
+            command=self.toggle_pause,
+            bg="#333333",
+            fg=COLOR_TEXT,
+            relief=tk.FLAT,
+            font=("Menlo", 12),
+            width=3,
         )
         self.pause_btn.pack(side=tk.RIGHT)
 

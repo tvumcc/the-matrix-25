@@ -14,6 +14,7 @@ ANIM_DIR = Path(__file__).resolve().with_name("animations")
 ENCODED = True
 CLEAN = True
 
+
 def _get_all_from_files() -> dict[str, list[tuple[int, list[list[int]]]]]:
     import cleaner
     import interpret
@@ -38,6 +39,7 @@ def get_all() -> dict[str, list[tuple[int, list[list[int]]]]]:
     if ENCODED:
         print("using encoded animations")
         import decoder
+
         return decoder.get_all()
     else:
         print("using filesystem animations")

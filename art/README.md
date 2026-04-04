@@ -26,26 +26,25 @@ An `Animation` is:
 
 ## Encoding Process
 
-The encoded data will be what the chip sees. Right now, the current encoding is **proposed**.
+The encoded data will be what the chip sees.
 
 `encode.py` converts all `.anim` files into three arrays in `encoded.dat`:
 
-1. `basis`: small timing lookup table (max 8 entries, index fits in 3 bits).
-2. `start_indices`: start row index for each animation in encoded order.
-3. `everything`: flat byte array, one byte per LED row.
+1. `basis`: small timing lookup table (max 7 entries).
+2. `start_indices`: start frame index for each animation in encoded order.
+3. `everything`: flat 32-bit integer array, one 32-bit integer per frame.
 
-Each encoded row byte is:
+Each encoded 32-bit frame is packed as:
 
-- upper 3 bits: timing basis index
-- lower 5 bits: LED row bits
+- upper 7 bits: boolean flags indicating which basis values to sum for the frame's delay
+- lower 25 bits: the 5x5 LED grid, flattened row by row
 
-For a frame (5 rows):
+For a frame (32 bits):
 
-- row delays are looked up from `basis` using each row's upper 3 bits
-- frame delay is the sum of those 5 basis values
-- row pixels come from the lower 5 bits of each row byte
+- frame delay is the sum of the `basis` values whose corresponding flag bit is set in the top 7 bits
+- grid pixels are extracted from the lower 25 bits
 
-The decoder is designed to match intended chip-side behavior: timing and pixels are decoded directly from packed row bytes.
+The decoder is designed to match intended chip-side behavior: timing and pixels are decoded directly from packed 32-bit frames.
 
 ## Workflow
 

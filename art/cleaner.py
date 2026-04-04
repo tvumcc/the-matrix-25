@@ -38,7 +38,7 @@ def _find_cycle_period(animation: list[tuple[int, list[list[int]]]]) -> int | No
 
 
 def _best_similarity_period(
-    animation: list[tuple[int, list[list[int]]]]
+    animation: list[tuple[int, list[list[int]]]],
 ) -> tuple[int, float, list[int]] | None:
     total = len(animation)
     if total < 2:
@@ -70,7 +70,7 @@ def _best_similarity_period(
 
 
 def clean_animation(
-    animation: list[tuple[int, list[list[int]]]]
+    animation: list[tuple[int, list[list[int]]]],
 ) -> tuple[list[tuple[int, list[list[int]]]], int]:
     """trim repeated full cycles from one animation."""
     period = _find_cycle_period(animation)
@@ -83,11 +83,11 @@ def clean_animation(
 
 
 def clean_all(
-    animations: dict[str, list[tuple[int, list[list[int]]]]]
-) -> tuple[dict[str, list[tuple[int, list[list[int]]]]], list[dict[str, int]]]:
+    animations: dict[str, list[tuple[int, list[list[int]]]]],
+) -> tuple[dict[str, list[tuple[int, list[list[int]]]]], list[dict[str, str | int]]]:
     """clean all animations and return per-animation stats."""
     cleaned: dict[str, list[tuple[int, list[list[int]]]]] = {}
-    stats: list[dict[str, int]] = []
+    stats: list[dict[str, str | int]] = []
 
     for name in sorted(animations.keys()):
         original = animations[name]
@@ -200,7 +200,7 @@ def main() -> None:
         print(heading("trimmed animations:"))
         for item in stats:
             print(
-                f"  {success(item['name'])}: {item['before']} -> {item['after']} "
+                f"  {success(str(item['name']))}: {item['before']} -> {item['after']} "
                 f"(trimmed {item['trimmed']}, bytes saved {item['bytes_saved']})"
             )
         print()
@@ -219,10 +219,10 @@ def main() -> None:
             "possible save=trim to candidate cycle length"
         )
         for item in advisories:
-            ratio = float(item["similarity_ratio"]) * 100.0
+            ratio = float(str(item["similarity_ratio"])) * 100.0
             print(
-                f"  {warning(item['name'])} [{item['level']}]: "
-                f"cycle={item['candidate_period']}f, "
+                f"  {warning(str(item['name']))} [{item['level']}]: "
+                f"cycle={str(item['candidate_period'])}f, "
                 f"match={ratio:.2f}%, "
                 f"mismatches={item['mismatch_count']} @ {item['mismatches']}, "
                 f"possible save={item['possible_trimmed']}f/"
@@ -246,8 +246,8 @@ def main() -> None:
     advisory_frames_saved = 0
     advisory_bytes_saved = 0
     for item in advisories:
-        advisory_frames_saved += int(item["possible_trimmed"])
-        advisory_bytes_saved += int(item["possible_bytes_saved"])
+        advisory_frames_saved += int(str(item["possible_trimmed"]))
+        advisory_bytes_saved += int(str(item["possible_bytes_saved"]))
 
     possible_frames_saved = actual_frames_saved + advisory_frames_saved
     possible_rows_saved = possible_frames_saved * ROWS
@@ -258,10 +258,7 @@ def main() -> None:
 
     print(heading("totals:"))
     print(f"  {key('actual')}:")
-    print(
-        f"    frames: {total_before} -> {total_after} "
-        f"(saved {actual_frames_saved})"
-    )
+    print(f"    frames: {total_before} -> {total_after} (saved {actual_frames_saved})")
     print(f"    rows saved: {actual_rows_saved}")
     print(f"    bytes saved in everything: {actual_bytes_saved}")
     print(f"    frame reduction: {actual_percent:.2f}%")
