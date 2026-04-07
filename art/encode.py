@@ -40,7 +40,11 @@ EXCLUDED_ANIMATIONS += [
 EXCLUDED_ANIMATIONS += ["bounce", "orbit", "scan", "wipe", "snake"]
 
 # exclusion round 3
-EXCLUDED_ANIMATIONS += []
+EXCLUDED_ANIMATIONS += ["basic","breathe","matrix"]
+
+# round 4
+EXCLUDED_ANIMATIONS += ["conway", "drop", "spiral"]
+
 # need to cut matrix or rain
 
 
