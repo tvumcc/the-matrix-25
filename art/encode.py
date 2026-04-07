@@ -319,7 +319,11 @@ def main() -> None:
         f.write(",".join([str(int(e, 2)) for e in everything]))
         f.write("}\n")
 
-    print(success("\nall data written to encoded.dat\n"))
+    with open("encoded.bin", "wb") as f:
+        for e in everything:
+            f.write(int(e, 2).to_bytes(length=4))
+
+    print(success("\nall data written to encoded.dat and encoded.bin\n"))
 
     anim_bytes = len(everything) * 4
     start_indices_bytes = len(anim_ranges)
