@@ -1,4 +1,9 @@
-"""decoder for encoded.dat animation payloads."""
+"""decoder for encoded.dat
+
+mirrors the basic decoding process done by the chip.
+
+get_all() returns a dictionary of animations, keyed by name for use in the simulator.
+"""
 
 import re
 import sys
@@ -6,141 +11,67 @@ from pathlib import Path
 
 from ansi import bits, error, heading, key
 
-ROWS = 5
-COLS = 5
 DATA_FILE = Path(__file__).resolve().with_name("encoded.dat")
 
 
-def _parse_int_array(body: str) -> list[int]:
-    values: list[int] = []
-    tokens = body.split(",")
-    for token in tokens:
-        item = token.strip()
-        if not item:
-            continue
-        values.append(int(item, 0))
-    return values
-
-
-def _load_encoded() -> tuple[list[int], list[int], list[int]]:
-    with open(DATA_FILE) as f:
-        text = f.read()
-
+def get_all() -> dict[str, list[tuple[int, list[list[int]]]]]:
+    """decode every animation from encoded.dat."""
+    text = DATA_FILE.read_text()
     arrays = re.findall(r"\{([^}]*)\}", text, flags=re.DOTALL)
     if len(arrays) < 3:
         raise ValueError("encoded.dat is missing required arrays")
 
-    basis = _parse_int_array(arrays[0])
-    start_indices = _parse_int_array(arrays[1])
-    everything = _parse_int_array(arrays[2])
+    # parse arrays from strings (from encoded.dat)
+    # in the chip, these would be written in source code
+    basis = [int(t.strip(), 0) for t in arrays[0].split(",") if t.strip()]
+    starts = [int(t.strip(), 0) for t in arrays[1].split(",") if t.strip()]
+    frames = [int(t.strip(), 0) for t in arrays[2].split(",") if t.strip()]
 
-    if not basis:
-        raise ValueError("basis array is empty")
-    if not start_indices:
-        raise ValueError("start_indices array is empty")
-
-    return basis, start_indices, everything
-
-
-def _decode_span(
-    basis: list[int], everything: list[int], start: int, end: int
-) -> list[tuple[int, list[list[int]]]]:
-    count = end - start
-    if count < 0:
-        raise ValueError("invalid animation frame span in encoded.dat")
-
-    frames: list[tuple[int, list[list[int]]]] = []
-    pos = start
-    while pos < end:
-        packed = everything[pos]
-
-        delay = 0
-        for i in range(7):
-            if (packed >> (31 - i)) & 1:
-                if i < len(basis):
-                    delay += basis[i]
-
-        grid: list[list[int]] = []
-        for r in range(ROWS):
-            row: list[int] = []
-            for c in range(COLS):
-                bit_pos = 24 - (r * COLS + c)
-                row.append((packed >> bit_pos) & 1)
-            grid.append(row)
-
-        frames.append((delay, grid))
-        pos += 1
-
-    return frames
-
-
-def get_all() -> dict[str, list[tuple[int, list[list[int]]]]]:
-    """decode every animation as {name: Animation}."""
-    basis, start_indices, everything = _load_encoded()
+    # decode frames into animations
     result: dict[str, list[tuple[int, list[list[int]]]]] = {}
 
-    i = 0
-    while i < len(start_indices):
-        name = f"anim_{i:02d}"
-        start = start_indices[i]
-        if i + 1 < len(start_indices):
-            end = start_indices[i + 1]
-        else:
-            end = len(everything)
-        result[name] = _decode_span(basis, everything, start, end)
-        i += 1
+    for i, start in enumerate(starts):
+        # get the end index for the current animation
+        end = starts[i + 1] if i + 1 < len(starts) else len(frames)
+
+        # decode each frame into a delay and grid
+        anim: list[tuple[int, list[list[int]]]] = []
+
+        for packed in frames[start:end]:
+            # decode the delay from the flags
+            delay = sum(
+                basis[b] for b in range(min(7, len(basis))) if (packed >> (31 - b)) & 1
+            )
+
+            # decode the grid from the packed value
+            grid = [
+                [(packed >> (24 - r * 5 - c)) & 1 for c in range(5)] for r in range(5)
+            ]
+            anim.append((delay, grid))
+        result[f"anim_{i:02d}"] = anim
 
     return result
 
 
-def list_names() -> list[str]:
-    """list synthetic names in encoded order."""
-    return list(get_all().keys())
-
-
-def _resolve_index(name: str) -> int:
-    raw = name.strip()
-    if raw.endswith(".anim"):
-        raw = raw[:-5]
-    if raw.startswith("anim_"):
-        raw = raw[5:]
-
-    if not raw.isdigit():
-        raise ValueError(
-            f"invalid animation id '{name}', use anim_00 style or a numeric index"
-        )
-    return int(raw)
-
-
-def parse(name: str) -> list[tuple[int, list[list[int]]]]:
-    all_anims = get_all()
-    if name in all_anims:
-        return all_anims[name]
-
-    anim_index = _resolve_index(name)
-    key = f"anim_{anim_index:02d}"
-    if key not in all_anims:
-        raise IndexError(f"animation index out of range: {anim_index}")
-    return all_anims[key]
-
-
 def main() -> None:
     if len(sys.argv) < 2:
-        print(error("usage: python decoder.py <anim_id>"))
-        print(f"{heading('available')}: {', '.join(list_names())}")
+        all_anims = get_all()
+        print(error("usage: python decoder.py <index>"))
+        print(f"{heading('available')}: {', '.join(all_anims.keys())}")
         sys.exit(1)
 
-    frames = parse(sys.argv[1])
-    print(f"{heading('frames')}: {len(frames)}\n")
-    i = 0
-    while i < len(frames):
-        delay, grid = frames[i]
-        parts: list[str] = []
-        for row in grid:
-            bit_str = "".join(str(c) for c in row)
-            parts.append(bits(bit_str))
+    idx = int(sys.argv[1])
+    all_anims = get_all()
+    name = f"anim_{idx:02d}"
+    if name not in all_anims:
+        print(error(f"index {idx} out of range (0..{len(all_anims) - 1})"))
+        sys.exit(1)
+
+    anim = all_anims[name]
+    print(f"{heading('frames')}: {len(anim)}\n")
+    for i, (delay, grid) in enumerate(anim):
+        parts = [bits("".join(str(c) for c in row)) for row in grid]
         print(f"  {key(f'{i:3d}')}  {delay:4d}ms  {'  '.join(parts)}")
-        i += 1
 
 
 if __name__ == "__main__":

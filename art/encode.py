@@ -1,30 +1,24 @@
 """converts animations to code for the LED matrix.
 
-the encoding packs timing into the spare 3 bits of each row's uint8_t:
-  uint8_t row = (basis_index << 5) | led_bits
-  frame_delay_ms = sum of basis[row_i >> 5] for each of the 5 rows
-
-this means every timing must be expressible as a sum of exactly 5
-basis lookups (with basis[0]=0 acting as a no-op).
+each frame is a 32-bit value: 7 flag bits (31..25) + 25 grid bits (24..0).
+each flag selects a basis value; frame delay = sum of selected basis values.
+all flags off = 0ms delay, so 0 never needs to appear in the basis.
 """
 
 import os
 from math import gcd
 from functools import reduce
+from collections.abc import Callable
 
 from ansi import accent, alert, error, heading, info, key, muted, success, warning
 import cleaner
 from interpret import parse_text as parse_animation
 
-NUM_ROWS = 5
-MAX_BASIS_SIZE = 7  # 7 bits -> basis flags
+MAX_BASIS_SIZE = 7
 ANIM_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "animations")
 
 # TODO: animations need to be excluded to fit in memory
-EXCLUDED_ANIMATIONS = []
-
-# exclusion round 1
-EXCLUDED_ANIMATIONS += [
+EXCLUDED_ANIMATIONS = [
     "arrows",
     "cascade",
     "cross",
@@ -34,18 +28,18 @@ EXCLUDED_ANIMATIONS += [
     "starburst",
     "strobe",
     "glitch",
+    "bounce",
+    "orbit",
+    "scan",
+    "wipe",
+    "snake",
+    "basic",
+    "breathe",
+    "matrix",
+    "conway",
+    "drop",
+    "spiral",
 ]
-
-# exclusion round 2
-EXCLUDED_ANIMATIONS += ["bounce", "orbit", "scan", "wipe", "snake"]
-
-# exclusion round 3
-EXCLUDED_ANIMATIONS += ["basic","breathe","matrix"]
-
-# round 4
-EXCLUDED_ANIMATIONS += ["conway", "drop", "spiral"]
-
-# need to cut matrix or rain
 
 
 def collect_animations(
@@ -66,81 +60,56 @@ def collect_animations(
     return animations, sorted(excluded_found), excluded_missing
 
 
-def unique_timings(
-    animations: dict[str, list[tuple[int, list[list[int]]]]],
-) -> set[int]:
-    return {timing for anim in animations.values() for timing, _ in anim}
+def reachable_sums(basis: list[int], max_val: int) -> set[int]:
+    """all values expressible as a sum of a subset of basis values."""
+    sums = {0}
+    for b in basis:
+        sums |= {s + b for s in sums if s + b <= max_val}
+    return sums
 
 
-def reachable_sums(basis: list[int], picks: int, max_val: int) -> set[int]:
-    """all values expressible as a sum of exactly `picks` values from basis.
-    since 0 is in basis, this is equivalent to sums of *at most* `picks` nonzero values.
-    """
-    current = {0}
-    for _ in range(picks):
-        nxt: set[int] = set()
-        for v in current:
-            for b in basis:
-                s = v + b
-                if s <= max_val:
-                    nxt.add(s)
-        current = nxt
-    return current
-
-
-def find_basis(
-    targets: set[int], max_size: int = MAX_BASIS_SIZE, picks: int = NUM_ROWS
-) -> list[int]:
-    """find a basis of at most `max_size` values (including 0) such that
-    every target is a sum of exactly `picks` basis values.
-
-    uses GCD to shrink the search space, then scales back.
-    uses greedy search: each round, add the candidate that covers the most
-    uncovered targets. falls back to backtracking if greedy gets stuck.
+def find_basis(targets: set[int], max_size: int = MAX_BASIS_SIZE) -> list[int]:
+    """find at most `max_size` non-zero basis values whose subset sums
+    cover every target. uses GCD to shrink search space, then greedy selection.
     """
     g = reduce(gcd, targets)
     scaled = {t // g for t in targets}
     max_t = max(scaled)
 
-    basis = [0]
-    uncovered = scaled.copy()
+    basis: list[int] = []
+    uncovered = scaled - {0}
 
     while uncovered and len(basis) < max_size:
-        best_val = -1
-        best_count = 0
-
+        best_val, best_count = -1, 0
         for candidate in range(1, max_t + 1):
             if candidate in basis:
                 continue
-            trial = basis + [candidate]
-            reach = reachable_sums(trial, picks, max_t)
-            covered = len(uncovered & reach)
+            covered = len(uncovered & reachable_sums(basis + [candidate], max_t))
             if covered > best_count:
                 best_count = covered
                 best_val = candidate
 
         if best_val == -1:
             break
-
         basis.append(best_val)
-        uncovered -= reachable_sums(basis, picks, max_t)
+        uncovered -= reachable_sums(basis, max_t)
 
     return sorted(b * g for b in basis)
 
 
-def decompose(target: int, basis: list[int], picks: int = NUM_ROWS) -> list[int] | None:
-    """find indices into basis that sum to target using exactly `picks` values.
-    returns list of `picks` indices, or None if impossible.
-    """
+def decompose(target: int, basis: list[int]) -> list[int] | None:
+    """find a subset of basis indices whose values sum to target."""
+    if target == 0:
+        return []
 
-    def backtrack(remaining: int, depth: int, path: list[int]) -> list[int] | None:
-        if depth == picks:
-            return path[:] if remaining == 0 else None
-        for i, b in enumerate(basis):
-            if b > remaining:
+    def backtrack(remaining: int, start: int, path: list[int]) -> list[int] | None:
+        if remaining == 0:
+            return path[:]
+        for i in range(start, len(basis)):
+            if basis[i] > remaining:
                 break
             path.append(i)
-            result = backtrack(remaining - b, depth + 1, path)
+            result = backtrack(remaining - basis[i], i + 1, path)
             if result is not None:
                 return result
             path.pop()
@@ -149,11 +118,56 @@ def decompose(target: int, basis: list[int], picks: int = NUM_ROWS) -> list[int]
     return backtrack(target, 0, [])
 
 
+def pack_frame(delay_indices: list[int], grid: list[list[int]]) -> int:
+    """pack a frame into a single 32-bit integer."""
+    flags = 0
+    for i in delay_indices:
+        flags |= 1 << (31 - i)
+    for r, row in enumerate(grid):
+        for c, val in enumerate(row):
+            if val:
+                flags |= 1 << (24 - r * 5 - c)
+    return flags
+
+
+def verify(
+    basis: list[int],
+    everything: list[int],
+    anim_ranges: dict[str, tuple[int, int]],
+    animations: dict[str, list[tuple[int, list[list[int]]]]],
+) -> bool:
+    """decode every packed frame and diff against the original animations."""
+    ok = True
+    for name in sorted(anim_ranges):
+        start, end = anim_ranges[name]
+        original = animations[name]
+        if end - start != len(original):
+            print(
+                error(
+                    f"  {name}: frame count mismatch ({end - start} vs {len(original)})"
+                )
+            )
+            ok = False
+            continue
+        for i, packed in enumerate(everything[start:end]):
+            delay = sum(basis[b] for b in range(len(basis)) if (packed >> (31 - b)) & 1)
+            grid = [
+                [(packed >> (24 - r * 5 - c)) & 1 for c in range(5)] for r in range(5)
+            ]
+            orig_delay, orig_grid = original[i]
+            if delay != orig_delay or grid != orig_grid:
+                print(
+                    error(f"  {name} frame {i}: expected {orig_delay}ms, got {delay}ms")
+                )
+                ok = False
+    return ok
+
+
 def main() -> None:
-    excluded_names: list[str] = list(set(EXCLUDED_ANIMATIONS))
+    excluded_names = list(set(EXCLUDED_ANIMATIONS))
     animations, excluded_found, excluded_missing = collect_animations(excluded_names)
     animations, clean_stats = cleaner.clean_all(animations)
-    timings = unique_timings(animations)
+    timings = {t for anim in animations.values() for t, _ in anim}
 
     print(
         f"{key('animations')}: {len(animations)}, "
@@ -173,10 +187,10 @@ def main() -> None:
 
     if clean_stats:
         print(f"{heading('cleaned before encoding')}: {len(clean_stats)}")
-        for item in clean_stats:
+        for s in clean_stats:
             print(
-                f"  {success(str(item['name']))}: {item['before']} -> {item['after']} "
-                f"(trimmed {item['trimmed']}, bytes saved {item['bytes_saved']})"
+                f"  {success(str(s['name']))}: {s['before']} -> {s['after']} "
+                f"(trimmed {s['trimmed']}, bytes saved {s['bytes_saved']})"
             )
         print()
 
@@ -186,160 +200,83 @@ def main() -> None:
     basis = find_basis(timings)
     print(f"{heading(f'basis ({len(basis)} slots)')}: {basis}")
 
-    # ensure every timing can be represented.
-    reach = reachable_sums(basis, NUM_ROWS, max(timings))
-    missing = timings - reach
+    missing = timings - reachable_sums(basis, max(timings))
     if missing:
         print(
             f"\n{error('FAILED')} {warning('unreachable timings')}: {sorted(missing)}"
         )
         return
-
     print(f"\n{success(f'all {len(timings)} timings are reachable')}\n")
 
-    # flatten all animations into one row stream.
-    # ranges in this stream are stored as [start, end).
-    everything: list[str] = []
+    # encode all frames as packed 32-bit values
+    everything: list[int] = []
     anim_ranges: dict[str, tuple[int, int]] = {}
 
-    keys = sorted(animations.keys())
-    for name in keys:
-        animation = animations[name]
-        starting_index = len(everything)
-        for frame_idx, frame in enumerate(animation):
-            # encode delay by packing the timing basis index into top 7 bits.
-            indices = decompose(frame[0], basis)
+    for name in sorted(animations):
+        start = len(everything)
+        for i, (delay, grid) in enumerate(animations[name]):
+            indices = decompose(delay, basis)
             if indices is None:
-                raise ValueError(
-                    f"failed to decompose timing of {name} frame {frame_idx}: {frame[0]}"
-                )
+                raise ValueError(f"can't decompose {name} frame {i}: {delay}ms")
+            everything.append(pack_frame(indices, grid))
+        anim_ranges[name] = (start, len(everything))
 
-            basis_flags = [False] * 7
-            for idx in indices:
-                basis_flags[idx] = True
-            flags_str = "".join("1" if b else "0" for b in basis_flags)
+    if verify(basis, everything, anim_ranges, animations):
+        print(success("round-trip verification passed\n"))
+    else:
+        print(error("round-trip verification FAILED"))
+        return
 
-            grid_str = ""
-            for row_val in frame[1]:
-                grid_str += "".join(str(i) for i in row_val)
-
-            combined = flags_str + grid_str
-            everything.append(combined)
-        ending_index = len(everything)
-        anim_ranges[name] = (starting_index, ending_index)
-
-    start_indices = [anim_ranges[name][0] for name in keys]
-
+    start_indices = [anim_ranges[n][0] for n in sorted(anim_ranges)]
     total_frames = len(everything)
-    animation_bytes = total_frames * 4
-    index_w = len(str(total_frames))
-    rows: list[dict[str, str]] = []
+    total_anim_bytes = total_frames * 4
 
-    for name, (start, end) in anim_ranges.items():
-        frame_count = end - start
-        byte_count = frame_count * 4
-        percent = (
-            0.0 if animation_bytes == 0 else (byte_count / animation_bytes) * 100.0
-        )
-        range_text = f"[{start:>{index_w}}, {end:>{index_w}})"
-        rows.append(
-            {
-                "name": name,
-                "range": range_text,
-                "frames": str(frame_count),
-                "bytes": str(byte_count),
-                "percent": f"{percent:6.2f}%",
-            }
-        )
-
-    name_w = max(len("name"), *(len(r["name"]) for r in rows))
-    range_w = max(len("range"), *(len(r["range"]) for r in rows))
-    frames_w = max(len("frames"), *(len(r["frames"]) for r in rows))
-    bytes_w = max(len("bytes"), *(len(r["bytes"]) for r in rows))
-    percent_w = max(len("% bytes"), *(len(r["percent"]) for r in rows))
-
-    def _left_cell(value: str, width: int, colorize) -> str:
-        pad_len = max(0, width - len(value))
-        return (
-            colorize(value) + muted("." * min(pad_len, 6)) + (" " * max(0, pad_len - 6))
-        )
-
-    def _right_cell(value: str, width: int, colorize) -> str:
-        pad_len = max(0, width - len(value))
-        return (
-            (" " * max(0, pad_len - 6)) + muted("." * min(pad_len, 6)) + colorize(value)
-        )
-
-    header_cells = [
-        info(f"{'name':<{name_w}}"),
-        accent(f"{'range':<{range_w}}"),
-        key(f"{'frames':>{frames_w}}"),
-        warning(f"{'bytes':>{bytes_w}}"),
-        alert(f"{'% bytes':>{percent_w}}"),
-    ]
-    header = "  " + "  ".join(header_cells)
-    print(header)
-    print(muted("  " + "-" * (name_w + range_w + frames_w + bytes_w + percent_w + 8)))
-
-    for row in rows:
-        name_cell = _left_cell(row["name"], name_w, info)
-        range_cell = _left_cell(row["range"], range_w, accent)
-        frames_cell = _right_cell(row["frames"], frames_w, key)
-        bytes_cell = _right_cell(row["bytes"], bytes_w, warning)
-        percent_cell = _right_cell(row["percent"], percent_w, alert)
+    # print summary table
+    nw = max(4, *(len(n) for n in anim_ranges))
+    iw = len(str(total_frames))
+    print(
+        f"  {info('name'):<{nw}}  {'range':>{2 * iw + 4}}  {'frames':>6}  {'bytes':>5}  {'%':>7}"
+    )
+    print(muted("  " + "-" * (nw + 2 * iw + 28)))
+    for name, (s, e) in anim_ranges.items():
+        fc, bc = e - s, (e - s) * 4
+        pct = bc / total_anim_bytes * 100 if total_anim_bytes else 0
         print(
-            f"  {name_cell}  {range_cell}  {frames_cell}  {bytes_cell}  {percent_cell}"
+            f"  {info(name):<{nw + 9}}  {accent(f'[{s:>{iw}}, {e:>{iw}})'):<{2 * iw + 13}}"
+            f"  {key(f'{fc:>6}')}  {warning(f'{bc:>5}')}  {alert(f'{pct:6.2f}%')}"
         )
 
-    # write packed payload to disk.
+    # write packed payload
+    def _arr(out, label: str, vals: list[int], fmt: Callable[[int], str] = str) -> None:
+        out.write(f"# {label}: \n{{{','.join(fmt(v) for v in vals)}}}\n\n")
+
     with open("encoded.dat", "w") as f:
-        # write basis values.
-        f.write("# basis: \n")
-        f.write("{")
-        f.write(",".join(str(b) for b in basis))
-        f.write("}\n")
+        _arr(f, "basis", basis)
+        _arr(f, "start_indices", start_indices)
+        _arr(f, "everything", everything, lambda v: f"0b{v:032b}")
+        _arr(f, "everything_hex", everything, lambda v: f"0x{v:08x}")
+        _arr(f, "everything_int", everything)
 
-        # write start indices.
-        f.write("\n# start_indices: \n")
-        f.write("{")
-        f.write(",".join(str(i) for i in start_indices))
-        f.write("}\n")
-
-        # write all packed rows.
-        f.write("\n# everything: \n")
-        f.write("{")
-        f.write(",".join(["0b" + e for e in everything]))
-        f.write("}\n")
-        f.write("\n# everything_hex: \n")
-        f.write("{")
-        f.write(",".join(["0x" + hex(int(e, 2))[2:] for e in everything]))
-        f.write("}\n")
-        f.write("\n# everything_int: \n")
-        f.write("{")
-        f.write(",".join([str(int(e, 2)) for e in everything]))
-        f.write("}\n")
-
-    with open("encoded.bin", "wb") as f:
-        for e in everything:
-            f.write(int(e, 2).to_bytes(length=4))
+    with open("encoded.bin", "wb") as bf:
+        for v in everything:
+            bf.write(v.to_bytes(length=4))
 
     print(success("\nall data written to encoded.dat and encoded.bin\n"))
 
-    anim_bytes = len(everything) * 4
-    start_indices_bytes = len(anim_ranges)
+    idx_bytes = len(anim_ranges)
     basis_bytes = len(basis)
-    total_bytes = anim_bytes + start_indices_bytes + basis_bytes
+    total = total_anim_bytes + idx_bytes + basis_bytes
 
     print(heading("Memory Footprint:"))
     print(
-        f"  {key('Animation Data (32-bit frames)')}: {anim_bytes} bytes ({total_frames} frames)"
+        f"  {key('Animation Data (32-bit frames)')}: {total_anim_bytes} bytes ({total_frames} frames)"
     )
     print(
-        f"  {key('Start Indices (8-bit)')}:          {start_indices_bytes} bytes ({len(anim_ranges)} animations)"
+        f"  {key('Start Indices (8-bit)')}:          {idx_bytes} bytes ({len(anim_ranges)} animations)"
     )
     print(f"  {key('Basis Array (8-bit)')}:            {basis_bytes} bytes")
     print(f"  {muted('-' * 45)}")
-    print(f"  {warning('Total Required Memory')}:          {total_bytes} bytes")
+    print(f"  {warning('Total Required Memory')}:          {total} bytes")
 
 
 if __name__ == "__main__":
