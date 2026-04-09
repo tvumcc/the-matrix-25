@@ -13,7 +13,7 @@
        |    |    |    |    |
 --4----O----O----O----O----O
 */
-
+#include <EEPROM.h>
 
 #define LED_COL_GND_0 3
 #define LED_COL_GND_1 4
@@ -26,6 +26,10 @@
 #define LED_ROW_2 10
 #define LED_ROW_3 9
 #define LED_ROW_4 8
+
+#define BUTTON 0
+
+#define NUM_TOTAL_FRAMES 128
 
 int col_pins[5] = {
   LED_COL_GND_0,
@@ -43,70 +47,19 @@ int row_pins[5] = {
   LED_ROW_4
 };
 
-struct Frame {
-  short time_ms; 
-  uint8_t bits[5];
-};
+uint8_t basis[] = {0, 20, 100, 150, 0, 0, 0};
+uint8_t start_indices[] = {0, 12, 25, 45, 53, 79, 99, NUM_TOTAL_FRAMES}; // 7 Animations, starting idx of 128 is added to the end for convenience when looping
 
-struct Animation {
-  uint8_t num_loops = 1;
-  uint8_t num_frames;
-  Frame frames[13];
-};
+uint8_t multiplexer_delay = 2;
+uint8_t current_frame = 0;
+uint8_t current_animation = 0;
+uint8_t num_animations = 7;
+long long frame_start = millis();
 
-Animation spiral;
-Animation spin;
-Animation ripple;
-
-void setup_animations() {
-  setup_spiral_animation(&spiral);
-  setup_spin_animation(&spin);
-  setup_ripple_animation(&ripple);
-}
-
-void setup_spiral_animation(Animation* animation) {
-  int speed = 100;
-  animation->num_frames = 13;
-  animation->num_loops = 1;
-
-  animation->frames[0] = {speed, {0b11000,0b00000,0b00000,0b00000,0b00000}};
-  animation->frames[1] = {speed, {0b11110,0b00000,0b00000,0b00000,0b00000}};
-  animation->frames[2] = {speed, {0b11111,0b00001,0b00000,0b00000,0b00000}};
-  animation->frames[3] = {speed, {0b11111,0b00001,0b00001,0b00001,0b00000}};
-  animation->frames[4] = {speed, {0b11111,0b00001,0b00001,0b00001,0b00011}};
-  animation->frames[5] = {speed, {0b11111,0b00001,0b00001,0b00001,0b01111}};
-  animation->frames[6] = {speed, {0b11111,0b00001,0b00001,0b10001,0b11111}};
-  animation->frames[7] = {speed, {0b11111,0b10001,0b10001,0b10001,0b11111}};
-  animation->frames[8] = {speed, {0b11111,0b11101,0b10001,0b10001,0b11111}};
-  animation->frames[9] = {speed, {0b11111,0b11111,0b10011,0b10001,0b11111}};
-  animation->frames[10] = {speed, {0b11111,0b11111,0b10011,0b10111,0b11111}};
-  animation->frames[11] = {speed, {0b11111,0b11111,0b11011,0b11111,0b11111}};
-  animation->frames[12] = {1500, {0b11111,0b11111,0b11111,0b11111,0b11111}};
-}
-
-void setup_spin_animation(Animation* animation) {
-  int speed = 150;
-  animation->num_frames = 4;
-  animation->num_loops = 10;
-
-  animation->frames[0] = {speed, {0b00100, 0b00100, 0b11111, 0b00100, 0b00100}};
-  animation->frames[1] = {speed, {0b00010, 0b11010, 0b00100, 0b01011, 0b01000}};
-  animation->frames[2] = {speed, {0b10001, 0b01010, 0b00100, 0b01010, 0b10001}};
-  animation->frames[3] = {speed, {0b01000, 0b01011, 0b00100, 0b11010, 0b00010}};
-}
-
-void setup_ripple_animation(Animation* animation) {
-  int speed = 150;
-  animation->num_frames = 6;
-  animation->num_loops = 10;
-
-  animation->frames[0] = {speed, {0b00000,0b00000,0b00000,0b00000,0b00000}};
-  animation->frames[1] = {speed, {0b00000,0b00000,0b00100,0b00000,0b00000}};
-  animation->frames[2] = {speed, {0b00000,0b00100,0b01010,0b00100,0b00000}};
-  animation->frames[3] = {speed, {0b00100,0b01010,0b10001,0b01010,0b00100}};
-  animation->frames[4] = {speed, {0b01010,0b10001,0b00000,0b10001,0b01010}};
-  animation->frames[5] = {speed, {0b10001,0b00000,0b00000,0b00000,0b10001}};
-}
+int button_state;
+int last_button_state = LOW;
+unsigned long last_debounce_time = 0;
+unsigned long debounce_delay = 50;
 
 void setup() {
   for (int i = 0; i < 5; i++) {
@@ -119,43 +72,61 @@ void setup() {
     digitalWrite(row_pins[i], LOW);
   }
 
-  setup_animations();
+  pinMode(BUTTON, INPUT);
 }
 
-Animation* animations[3] = {
-  &spiral,
-  &spin,
-  &ripple,
-};
-
-int multiplexer_delay = 2;
-int current_frame = 0;
-int current_loop = 0;
-int current_animation = 0;
-int num_animations = 3;
-long long frame_start = millis();
+uint32_t get_eeprom_frame(unsigned int frame_idx) {
+  return ((uint32_t)EEPROM.read(frame_idx * 4 + 0) << 24) | 
+         ((uint32_t)EEPROM.read(frame_idx * 4 + 1) << 16) | 
+         ((uint32_t)EEPROM.read(frame_idx * 4 + 2) << 8)  | 
+         ((uint32_t)EEPROM.read(frame_idx * 4 + 3));
+}
 
 void loop() {
+  int button_reading = digitalRead(BUTTON);
+
+  if (button_reading != last_button_state) {
+    last_debounce_time = millis();
+  }
+
+  if ((millis() - last_debounce_time) > debounce_delay) {
+    if (button_reading != button_state) {
+      button_state = button_reading;
+      if (button_state == HIGH) {
+        current_animation = (current_animation + 1) % num_animations;
+        current_frame = 0;
+        frame_start = millis();
+      }
+    }
+  }
+
+  uint32_t frame_idx = start_indices[current_animation] + current_frame;
+  uint32_t frame_data = get_eeprom_frame(frame_idx);
+  uint32_t frame_delay = 0;
+  for (int i = 0; i < 7; i++) {
+    if (((frame_data >> 25) & (1 << (6 - i))) != 0) {
+      frame_delay += basis[i];
+    }
+  }
+
   for (int i = 0; i < 5; i++) {
     for (int j = 0; j < 5; j++)
       digitalWrite(row_pins[j], LOW);
-    for (int j = 0; j < 5; j++)
-      digitalWrite(row_pins[j], ((animations[current_animation]->frames[current_frame].bits[j] & (1 << (4 - i))) != 0) ? HIGH : LOW);
+    for (int j = 0; j < 5; j++) {
+      uint32_t frame_row = (frame_data >> (5 * (4 - j))) & 0x1F;
+      digitalWrite(row_pins[j], ((frame_row & (1 << (4 - i))) != 0) ? HIGH : LOW);
+    }
+      
     digitalWrite(col_pins[i], LOW);
 
     delay(multiplexer_delay);
     digitalWrite(col_pins[i], HIGH);
   }
 
-  if (millis() - frame_start >= spiral.frames[current_frame].time_ms) {
-    current_frame = (current_frame + 1) % animations[current_animation]->num_frames; 
-    if (current_frame == 0) {
-      current_loop++;
-      if (current_loop > animations[current_animation]->num_loops) {
-        current_animation = (current_animation + 1) % num_animations;
-        current_loop = 0;
-      }
-    }
+  if (millis() - frame_start >= frame_delay) {
+    current_frame = (current_frame + 1) % (start_indices[current_animation + 1] - start_indices[current_animation]); 
     frame_start = millis();
   }
+
+  last_button_state = button_reading;
 }
