@@ -2,3 +2,4 @@
 *.lck
 */__pycache__/*
 */.venv/*
+.history
